@@ -342,6 +342,13 @@ def render_task_page(task_id: str) -> str:
     async function pollStatus() {{
       try {{
         const response = await fetch(`/tasks/${{taskId}}?access_password=`);
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {{
+          messageText.textContent = "连接波动，正在重试。";
+          setTimeout(pollStatus, 3000);
+          return;
+        }}
+
         const payload = await response.json();
         if (!response.ok) {{
           throw new Error(payload.detail || "查询状态失败");
@@ -365,8 +372,9 @@ def render_task_page(task_id: str) -> str:
           errorText.textContent = payload.error || "处理失败，请重新上传或稍后再试。";
         }}
       }} catch (error) {{
-        messageText.textContent = "";
-        errorText.textContent = error.message || "查询状态失败";
+        messageText.textContent = "连接波动，正在重试。";
+        errorText.textContent = "";
+        setTimeout(pollStatus, 3000);
       }}
     }}
 
