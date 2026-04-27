@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+ebooklib
+beautifulsoup4
+openai
+python-docx
+python-multipart
+python-dotenv

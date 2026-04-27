@@ -1,0 +1,51 @@
+# 本地配置和生成文件
+logs/
+notes/
+runs/
+tools/
+*.epub
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 操作系统生成文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件和日志
+*.log
+*.tmp
+*.temp
+tasks/
+runs/
+
+# 测试中间结果文件
+actual_performance_results.json
+optimization_test_results.json
+performance_test_result.json
+
+# 环境变量配置文件
+.env
+!.env.template

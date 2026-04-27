@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>经济学人助手小季</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fffaf2;
+      --line: #d6c6ac;
+      --text: #2b2418;
+      --muted: #6f6556;
+      --accent: #9f4a22;
+      --accent-dark: #7e3818;
+      --success: #1d6b3f;
+      --error: #a12727;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Georgia", "Times New Roman", serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(159, 74, 34, 0.12), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(42, 91, 134, 0.12), transparent 24%),
+        linear-gradient(180deg, #f8f2e8 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+
+    .wrap {
+      width: min(880px, calc(100% - 32px));
+      margin: 40px auto;
+    }
+
+    .panel {
+      background: rgba(255, 250, 242, 0.95);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 50px rgba(80, 58, 33, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 20px;
+      font-size: clamp(30px, 5vw, 44px);
+      line-height: 1.1;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .panel {
+      padding: 24px;
+    }
+
+    .panel h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+    }
+
+    input[type="file"],
+    input[type="text"] {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button,
+    .link-button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font-size: 15px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+
+    button:hover,
+    .link-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .primary:hover {
+      background: var(--accent-dark);
+    }
+
+    .primary.processing {
+      background: var(--success);
+    }
+
+    .secondary {
+      background: #eadcc8;
+      color: var(--text);
+    }
+
+    .secondary:hover {
+      background: #dfcfb8;
+    }
+
+    .link-button {
+      display: inline-flex;
+      background: var(--success);
+      color: #fff;
+    }
+
+    .error {
+      margin-top: 14px;
+      color: var(--error);
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .message {
+      margin-top: 14px;
+      color: var(--success);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .single {
+      max-width: 500px;
+      margin: 120px auto 0;
+    }
+
+    .password-input {
+      margin-top: 0;
+    }
+
+    .hidden-file {
+      display: none;
+    }
+
+    .link-button[aria-disabled="true"] {
+      display: inline-flex;
+      background: #d9d1c4;
+      color: #7e7567;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+  </style>
+</head>
+  <body>
+  <main class="wrap">
+    <section class="panel single">
+      <h1>经济学人助手小季</h1>
+      <input id="accessPassword" class="password-input" type="text" placeholder="请输入访问口令">
+      <input id="epubFile" class="hidden-file" type="file" accept=".epub,application/epub+zip">
+      <div class="actions">
+        <button id="uploadButton" class="primary" type="button">上传</button>
+        <a id="downloadLink" class="link-button" href="#" aria-disabled="true">下载</a>
+      </div>
+      <div id="messageText" class="message"></div>
+      <div id="errorText" class="error"></div>
+    </section>
+  </main>
+
+  <script>
+    const fileInput = document.getElementById("epubFile");
+    const accessPasswordInput = document.getElementById("accessPassword");
+    const uploadButton = document.getElementById("uploadButton");
+    const downloadLink = document.getElementById("downloadLink");
+    const messageText = document.getElementById("messageText");
+    const errorText = document.getElementById("errorText");
+
+    const TASK_STORAGE_KEY = "ecnoAssistTask";
+    const TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
+    let pollTimer = null;
+    let currentTaskId = "";
+    let currentStatus = "";
+    let hasNotifiedCompletion = false;
+
+    function currentAccessPassword() {
+      return accessPasswordInput.value.trim();
+    }
+
+    function hideDownload() {
+      downloadLink.setAttribute("aria-disabled", "true");
+      downloadLink.href = "#";
+    }
+
+    function showDownload() {
+      downloadLink.setAttribute("aria-disabled", "false");
+    }
+
+    function setUploadIdle() {
+      uploadButton.textContent = "上传";
+      uploadButton.classList.remove("processing");
+      uploadButton.disabled = false;
+    }
+
+    function setUploadProcessing() {
+      uploadButton.textContent = "处理中";
+      uploadButton.classList.add("processing");
+      uploadButton.disabled = true;
+    }
+
+    function showError(message) {
+      errorText.textContent = message || "";
+    }
+
+    function showMessage(message) {
+      messageText.textContent = message || "";
+    }
+
+    function saveTask(taskId) {
+      if (!taskId) {
+        return;
+      }
+      const payload = {
+        taskId,
+        savedAt: Date.now(),
+      };
+      window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(payload));
+    }
+
+    function clearSavedTask() {
+      window.localStorage.removeItem(TASK_STORAGE_KEY);
+    }
+
+    function loadSavedTask() {
+      const raw = window.localStorage.getItem(TASK_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      try {
+        const payload = JSON.parse(raw);
+        if (!payload.taskId || !payload.savedAt) {
+          clearSavedTask();
+          return null;
+        }
+        if (Date.now() - payload.savedAt > TASK_RETENTION_MS) {
+          clearSavedTask();
+          return null;
+        }
+        return payload.taskId;
+      } catch {
+        clearSavedTask();
+        return null;
+      }
+    }
+
+    function renderTask(payload) {
+      const previousStatus = currentStatus;
+      currentTaskId = payload.task_id || "";
+      currentStatus = payload.status || "";
+      if (currentTaskId) {
+        saveTask(currentTaskId);
+      }
+      if (payload.error) {
+        showError(payload.error);
+      } else {
+        showError("");
+      }
+
+      if (currentStatus === "pending") {
+        setUploadProcessing();
+        showMessage("任务已提交，可离开页面，稍后回来下载。");
+      } else if (currentStatus === "running") {
+        setUploadProcessing();
+        showMessage("任务已提交，可离开页面，稍后回来下载。");
+      } else if (currentStatus === "succeeded") {
+        setUploadIdle();
+        showMessage("处理完成，可以下载。");
+        clearSavedTask();
+      } else if (currentStatus === "failed") {
+        setUploadIdle();
+        showMessage("处理失败，请重新上传或稍后再试。");
+        clearSavedTask();
+      }
+
+      if (currentStatus === "succeeded" && currentTaskId) {
+        const accessPassword = encodeURIComponent(currentAccessPassword());
+        downloadLink.href = `/tasks/${currentTaskId}/download?access_password=${accessPassword}`;
+        showDownload();
+      } else {
+        hideDownload();
+      }
+
+      if (!hasNotifiedCompletion && previousStatus !== currentStatus) {
+        if (currentStatus === "succeeded") {
+          hasNotifiedCompletion = true;
+          window.alert("任务处理完成，可以下载文档。");
+        } else if (currentStatus === "failed") {
+          hasNotifiedCompletion = true;
+          window.alert("任务处理失败，请检查文件或稍后重试。");
+        }
+      }
+    }
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    async function fetchStatus(taskId, autoPoll = false) {
+      if (!taskId) {
+        return;
+      }
+
+      try {
+        const accessPassword = encodeURIComponent(currentAccessPassword());
+        const response = await fetch(`/tasks/${taskId}?access_password=${accessPassword}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || "查询状态失败");
+        }
+
+        renderTask(payload);
+
+        if (autoPoll && (payload.status === "pending" || payload.status === "running")) {
+          pollTimer = setTimeout(() => fetchStatus(taskId, true), 3000);
+        } else {
+          stopPolling();
+        }
+      } catch (error) {
+        stopPolling();
+        setUploadIdle();
+        showMessage("");
+        showError(error.message || "查询状态失败");
+        if ((error.message || "").includes("task not found")) {
+          clearSavedTask();
+        }
+      }
+    }
+
+    uploadButton.addEventListener("click", async () => {
+      if (!currentAccessPassword()) {
+        showError("请先输入访问口令。");
+        return;
+      }
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      const accessPassword = currentAccessPassword();
+      if (!accessPassword) {
+        showError("请先输入访问口令。");
+        return;
+      }
+      if (!file) {
+        showError("请先选择一个 epub 文件。");
+        return;
+      }
+
+      hideDownload();
+      showMessage("");
+      showError("");
+      currentTaskId = "";
+      currentStatus = "";
+      hasNotifiedCompletion = false;
+      stopPolling();
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("access_password", accessPassword);
+
+      try {
+        setUploadIdle();
+        showMessage("正在校验并上传，请稍候。");
+        const response = await fetch("/tasks", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || "上传失败");
+        }
+
+        renderTask(payload);
+        fetchStatus(payload.task_id, true);
+      } catch (error) {
+        setUploadIdle();
+        showMessage("");
+        showError(error.message || "上传失败");
+      }
+      fileInput.value = "";
+    });
+
+    const savedTaskId = loadSavedTask();
+    if (savedTaskId) {
+      showMessage("已恢复上次任务，正在检查状态。");
+      fetchStatus(savedTaskId, true);
+    }
+  </script>
+</body>
+</html>
