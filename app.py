@@ -227,6 +227,51 @@ async def debug_form(request: Request) -> dict:
     }
 
 
+@APP.post("/debug/raw")
+async def debug_raw(request: Request) -> dict:
+    body = await request.body()
+    content_type = request.headers.get("content-type", "")
+    markers = {
+        "name_file": b'name="file"',
+        "filename": b"filename=",
+        "epub_zip_magic": b"PK\x03\x04",
+        "access_password": b'name="access_password"',
+    }
+    marker_positions = {
+        name: body.find(marker)
+        for name, marker in markers.items()
+    }
+
+    snippets = {}
+    for name, position in marker_positions.items():
+        if position < 0:
+            continue
+        start = max(position - 120, 0)
+        end = min(position + 240, len(body))
+        snippets[name] = body[start:end].decode("utf-8", errors="replace")
+
+    disposition_lines = []
+    for line in body.splitlines():
+        if b"Content-Disposition" in line or b"Content-Type" in line:
+            disposition_lines.append(line.decode("utf-8", errors="replace"))
+        if len(disposition_lines) >= 20:
+            break
+
+    return {
+        "method": request.method,
+        "content_type": content_type,
+        "content_length": request.headers.get("content-length"),
+        "body_size": len(body),
+        "has_name_file": marker_positions["name_file"] >= 0,
+        "has_filename": marker_positions["filename"] >= 0,
+        "has_epub_zip_magic": marker_positions["epub_zip_magic"] >= 0,
+        "has_access_password": marker_positions["access_password"] >= 0,
+        "marker_positions": marker_positions,
+        "disposition_lines": disposition_lines,
+        "snippets": snippets,
+    }
+
+
 @APP.post("/tasks")
 async def create_task(
     background_tasks: BackgroundTasks,
