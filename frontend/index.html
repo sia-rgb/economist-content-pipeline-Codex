@@ -45,6 +45,7 @@
       font-size: 14px;
     }
 
+    input[type="password"],
     input[type="file"] {
       width: 100%;
       padding: 12px 14px;
@@ -53,6 +54,11 @@
       background: #fff;
       color: #2b2418;
       font-size: 15px;
+    }
+
+    input:disabled {
+      color: #6f6556;
+      background: #f1eadf;
     }
 
     button {
@@ -67,8 +73,14 @@
       cursor: pointer;
     }
 
-    button:hover {
+    button:hover:not(:disabled) {
       background: #7e3818;
+    }
+
+    button:disabled {
+      background: #d9d1c4;
+      color: #6f6556;
+      cursor: not-allowed;
     }
 
     p {
@@ -77,20 +89,125 @@
       font-size: 14px;
       line-height: 1.5;
     }
+
+    .message,
+    .error {
+      margin: 14px 0 0;
+      min-height: 21px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .message {
+      color: #236b45;
+    }
+
+    .error {
+      color: #a12727;
+    }
   </style>
 </head>
 <body>
   <main>
     <section>
       <h1>经济学人助手小季</h1>
-      <form action="/submit" method="post" enctype="multipart/form-data">
-        <input type="hidden" name="access_password" value="">
+
+      <label for="accessPassword">访问口令</label>
+      <input id="accessPassword" type="password" autocomplete="off" placeholder="请输入访问口令">
+      <button id="verifyButton" type="button">验证口令</button>
+      <div id="authMessage" class="message"></div>
+      <div id="authError" class="error"></div>
+
+      <form id="uploadForm" action="/submit" method="post" enctype="multipart/form-data">
+        <input id="accessPasswordField" type="hidden" name="access_password" value="">
         <label for="epubFile">EPUB 文件</label>
-        <input id="epubFile" name="file" type="file" accept=".epub,application/epub+zip" required>
-        <button type="submit">上传并处理</button>
+        <input id="epubFile" name="file" type="file" accept=".epub,application/epub+zip" required disabled>
+        <button id="uploadButton" type="submit" disabled>上传并处理</button>
       </form>
       <p>上传后会进入任务状态页，处理完成后可下载 Word。</p>
     </section>
   </main>
+
+  <script>
+    const accessPasswordInput = document.getElementById("accessPassword");
+    const accessPasswordField = document.getElementById("accessPasswordField");
+    const verifyButton = document.getElementById("verifyButton");
+    const authMessage = document.getElementById("authMessage");
+    const authError = document.getElementById("authError");
+    const uploadForm = document.getElementById("uploadForm");
+    const fileInput = document.getElementById("epubFile");
+    const uploadButton = document.getElementById("uploadButton");
+
+    let isVerified = false;
+
+    function setUploadEnabled(isEnabled) {
+      fileInput.disabled = !isEnabled;
+      uploadButton.disabled = !isEnabled;
+    }
+
+    function resetVerifiedState() {
+      isVerified = false;
+      accessPasswordField.value = "";
+      authMessage.textContent = "";
+      setUploadEnabled(false);
+    }
+
+    async function verifyPassword() {
+      const password = accessPasswordInput.value.trim();
+      if (!password) {
+        authError.textContent = "请先输入访问口令。";
+        resetVerifiedState();
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("access_password", password);
+
+      try {
+        verifyButton.disabled = true;
+        authMessage.textContent = "正在验证口令。";
+        authError.textContent = "";
+
+        const response = await fetch("/auth/check", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || "访问口令错误");
+        }
+
+        isVerified = true;
+        accessPasswordField.value = password;
+        accessPasswordInput.disabled = true;
+        authMessage.textContent = "口令已通过，可以选择 EPUB 文件。";
+        setUploadEnabled(true);
+      } catch (error) {
+        resetVerifiedState();
+        authMessage.textContent = "";
+        authError.textContent = error.message || "访问口令错误";
+      } finally {
+        verifyButton.disabled = isVerified;
+      }
+    }
+
+    verifyButton.addEventListener("click", verifyPassword);
+
+    accessPasswordInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        verifyPassword();
+      }
+    });
+
+    uploadForm.addEventListener("submit", (event) => {
+      if (!isVerified) {
+        event.preventDefault();
+        authError.textContent = "请先验证访问口令。";
+      }
+    });
+
+    setUploadEnabled(false);
+  </script>
 </body>
 </html>
