@@ -63,7 +63,6 @@
     }
 
     input[type="file"] {
-      display: none;
       width: 100%;
       padding: 12px 14px;
       border: 1px solid var(--line);
@@ -119,6 +118,7 @@
     }
 
     .message,
+    .file-name,
     .error {
       margin-top: 16px;
       min-height: 21px;
@@ -129,6 +129,10 @@
 
     .message {
       color: var(--success);
+    }
+
+    .file-name {
+      color: var(--muted);
     }
 
     .error {
@@ -161,10 +165,12 @@
     <section class="panel">
       <h1>经济学人助手小季</h1>
 
+      <label for="epubFile">EPUB 文件</label>
       <input id="epubFile" type="file" accept=".epub,application/epub+zip">
+      <div id="fileNameText" class="file-name">尚未选择文件。</div>
 
       <div class="actions">
-        <button id="uploadButton" type="button">选择 EPUB 并上传</button>
+        <button id="uploadButton" type="button" disabled>上传并处理</button>
         <a id="downloadLink" class="download" href="#" aria-disabled="true">下载 Word</a>
       </div>
 
@@ -177,11 +183,13 @@
     const fileInput = document.getElementById("epubFile");
     const uploadButton = document.getElementById("uploadButton");
     const downloadLink = document.getElementById("downloadLink");
+    const fileNameText = document.getElementById("fileNameText");
     const messageText = document.getElementById("messageText");
     const errorText = document.getElementById("errorText");
 
     let currentTaskId = "";
     let pollTimer = null;
+    let selectedFile = null;
 
     function showMessage(message) {
       messageText.textContent = message || "";
@@ -202,7 +210,11 @@
         return error.message;
       }
       if (Array.isArray(error.detail)) {
-        return error.detail.map((item) => item.msg || JSON.stringify(item)).join("\n");
+        return error.detail.map((item) => {
+          const loc = Array.isArray(item.loc) ? item.loc.join(".") : "";
+          const msg = item.msg || JSON.stringify(item);
+          return loc ? `${loc}: ${msg}` : msg;
+        }).join("\n");
       }
       if (error.detail) {
         return String(error.detail);
@@ -211,7 +223,7 @@
     }
 
     function setBusy(isBusy) {
-      uploadButton.disabled = isBusy;
+      uploadButton.disabled = isBusy || !selectedFile;
       fileInput.disabled = isBusy;
     }
 
@@ -233,7 +245,7 @@
     }
 
     async function uploadFile() {
-      const file = fileInput.files[0];
+      const file = selectedFile;
       if (!file) {
         showError("请先选择一个 EPUB 文件。");
         return;
@@ -267,7 +279,6 @@
         showError(errorMessage(error));
       } finally {
         setBusy(false);
-        fileInput.value = "";
       }
     }
 
@@ -305,12 +316,20 @@
       }
     }
 
-    uploadButton.addEventListener("click", () => {
-      fileInput.click();
+    uploadButton.addEventListener("click", uploadFile);
+
+    fileInput.addEventListener("change", () => {
+      selectedFile = fileInput.files[0] || null;
+      if (selectedFile) {
+        fileNameText.textContent = `已选择：${selectedFile.name}`;
+        showError("");
+      } else {
+        fileNameText.textContent = "尚未选择文件。";
+      }
+      setBusy(false);
     });
 
-    fileInput.addEventListener("change", uploadFile);
-
+    setBusy(false);
     hideDownload();
   </script>
 </body>
