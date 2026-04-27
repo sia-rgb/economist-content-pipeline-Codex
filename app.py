@@ -227,6 +227,189 @@ def run_task(task_id: str) -> None:
     write_status(task_id, "succeeded")
 
 
+def render_task_page(task_id: str) -> str:
+    task_id_json = json.dumps(task_id)
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务处理中</title>
+  <style>
+    * {{
+      box-sizing: border-box;
+    }}
+
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: Georgia, "Times New Roman", serif;
+      color: #2b2418;
+      background: #f6f0e6;
+    }}
+
+    main {{
+      width: min(560px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 72px 0;
+    }}
+
+    section {{
+      padding: 28px;
+      border: 1px solid #d8c7aa;
+      border-radius: 8px;
+      background: #fffaf2;
+      box-shadow: 0 18px 50px rgba(80, 58, 33, 0.1);
+    }}
+
+    h1 {{
+      margin: 0 0 16px;
+      font-size: 32px;
+      line-height: 1.15;
+      text-align: center;
+    }}
+
+    p {{
+      color: #6f6556;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }}
+
+    .actions {{
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }}
+
+    a {{
+      min-height: 42px;
+      padding: 10px 16px;
+      border-radius: 6px;
+      color: #fff;
+      text-decoration: none;
+      background: #9f4a22;
+    }}
+
+    #downloadLink {{
+      background: #236b45;
+    }}
+
+    #downloadLink[aria-disabled="true"] {{
+      background: #d9d1c4;
+      color: #6f6556;
+      pointer-events: none;
+    }}
+
+    .message {{
+      color: #236b45;
+    }}
+
+    .error {{
+      color: #a12727;
+      white-space: pre-wrap;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>任务处理中</h1>
+      <p>任务 ID：<span id="taskId"></span></p>
+      <p id="messageText" class="message">任务已提交，正在处理。</p>
+      <p id="errorText" class="error"></p>
+      <div class="actions">
+        <a href="/">继续上传</a>
+        <a id="downloadLink" href="#" aria-disabled="true">下载 Word</a>
+      </div>
+    </section>
+  </main>
+  <script>
+    const taskId = {task_id_json};
+    const taskIdText = document.getElementById("taskId");
+    const messageText = document.getElementById("messageText");
+    const errorText = document.getElementById("errorText");
+    const downloadLink = document.getElementById("downloadLink");
+
+    taskIdText.textContent = taskId;
+
+    function showDownload() {{
+      downloadLink.href = `/tasks/${{taskId}}/download?access_password=`;
+      downloadLink.setAttribute("aria-disabled", "false");
+    }}
+
+    async function pollStatus() {{
+      try {{
+        const response = await fetch(`/tasks/${{taskId}}?access_password=`);
+        const payload = await response.json();
+        if (!response.ok) {{
+          throw new Error(payload.detail || "查询状态失败");
+        }}
+
+        if (payload.status === "pending" || payload.status === "running") {{
+          messageText.textContent = "任务处理中，请稍候。";
+          setTimeout(pollStatus, 3000);
+          return;
+        }}
+
+        if (payload.status === "succeeded") {{
+          messageText.textContent = "处理完成，可以下载。";
+          errorText.textContent = "";
+          showDownload();
+          return;
+        }}
+
+        if (payload.status === "failed") {{
+          messageText.textContent = "";
+          errorText.textContent = payload.error || "处理失败，请重新上传或稍后再试。";
+        }}
+      }} catch (error) {{
+        messageText.textContent = "";
+        errorText.textContent = error.message || "查询状态失败";
+      }}
+    }}
+
+    pollStatus();
+  </script>
+</body>
+</html>"""
+
+
+async def create_task_from_request(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    cleanup_expired_tasks()
+    body = await request.body()
+    fields, files = parse_multipart_request(body, request.headers.get("content-type", ""))
+    access_password = fields.get("access_password", "")
+    verify_access_password(access_password)
+
+    file_payload = files.get("file")
+    if file_payload is None:
+        raise HTTPException(status_code=400, detail="missing file field")
+
+    filename = file_payload["filename"] or ""
+    if not filename.lower().endswith(".epub"):
+        raise HTTPException(status_code=400, detail="only .epub files are supported")
+
+    content = file_payload["content"]
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="file size exceeds 20MB limit")
+
+    task_id = uuid.uuid4().hex
+    task_dir = task_dir_for(task_id)
+    task_dir.mkdir(parents=True, exist_ok=False)
+
+    input_file = task_dir / "input.epub"
+    input_file.write_bytes(content)
+
+    status = write_status(task_id, "pending", source_filename=Path(filename).name)
+    background_tasks.add_task(run_task, task_id)
+    return status
+
+
 @APP.get("/")
 def index() -> HTMLResponse:
     if not FRONTEND_FILE.exists():
@@ -266,34 +449,16 @@ async def create_task(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> dict:
-    cleanup_expired_tasks()
-    body = await request.body()
-    fields, files = parse_multipart_request(body, request.headers.get("content-type", ""))
-    access_password = fields.get("access_password", "")
-    verify_access_password(access_password)
+    return await create_task_from_request(request, background_tasks)
 
-    file_payload = files.get("file")
-    if file_payload is None:
-        raise HTTPException(status_code=400, detail="missing file field")
 
-    filename = file_payload["filename"] or ""
-    if not filename.lower().endswith(".epub"):
-        raise HTTPException(status_code=400, detail="only .epub files are supported")
-
-    content = file_payload["content"]
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="file size exceeds 20MB limit")
-
-    task_id = uuid.uuid4().hex
-    task_dir = task_dir_for(task_id)
-    task_dir.mkdir(parents=True, exist_ok=False)
-
-    input_file = task_dir / "input.epub"
-    input_file.write_bytes(content)
-
-    status = write_status(task_id, "pending", source_filename=Path(filename).name)
-    background_tasks.add_task(run_task, task_id)
-    return status
+@APP.post("/submit")
+async def submit_task(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> HTMLResponse:
+    status = await create_task_from_request(request, background_tasks)
+    return HTMLResponse(render_task_page(status["task_id"]))
 
 
 @APP.get("/tasks/{task_id}")

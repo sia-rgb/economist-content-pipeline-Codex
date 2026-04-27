@@ -55,66 +55,27 @@
       font-size: 15px;
     }
 
-    .actions {
-      display: flex;
-      gap: 10px;
+    button {
+      width: 100%;
+      min-height: 44px;
       margin-top: 18px;
-      flex-wrap: wrap;
-    }
-
-    button,
-    .download {
-      min-height: 42px;
-      padding: 10px 16px;
       border: 0;
       border-radius: 6px;
-      font-size: 15px;
-      cursor: pointer;
-      text-decoration: none;
-    }
-
-    button {
       background: #9f4a22;
       color: #fff;
+      font-size: 15px;
+      cursor: pointer;
     }
 
-    button:hover:not(:disabled) {
+    button:hover {
       background: #7e3818;
     }
 
-    button:disabled,
-    .download[aria-disabled="true"] {
-      background: #d9d1c4;
+    p {
+      margin: 16px 0 0;
       color: #6f6556;
-      cursor: not-allowed;
-    }
-
-    .download {
-      display: inline-flex;
-      align-items: center;
-      background: #236b45;
-      color: #fff;
-    }
-
-    .download[aria-disabled="true"] {
-      pointer-events: none;
-    }
-
-    .message,
-    .error {
-      margin-top: 16px;
-      min-height: 21px;
       font-size: 14px;
       line-height: 1.5;
-      white-space: pre-wrap;
-    }
-
-    .message {
-      color: #236b45;
-    }
-
-    .error {
-      color: #a12727;
     }
   </style>
 </head>
@@ -122,157 +83,14 @@
   <main>
     <section>
       <h1>经济学人助手小季</h1>
-
-      <form id="uploadForm" enctype="multipart/form-data">
+      <form action="/submit" method="post" enctype="multipart/form-data">
         <input type="hidden" name="access_password" value="">
         <label for="epubFile">EPUB 文件</label>
         <input id="epubFile" name="file" type="file" accept=".epub,application/epub+zip" required>
-        <div class="actions">
-          <button id="uploadButton" type="submit">上传并处理</button>
-          <a id="downloadLink" class="download" href="#" aria-disabled="true">下载 Word</a>
-        </div>
+        <button type="submit">上传并处理</button>
       </form>
-
-      <div id="messageText" class="message"></div>
-      <div id="errorText" class="error"></div>
+      <p>上传后会进入任务状态页，处理完成后可下载 Word。</p>
     </section>
   </main>
-
-  <script>
-    const uploadForm = document.getElementById("uploadForm");
-    const fileInput = document.getElementById("epubFile");
-    const uploadButton = document.getElementById("uploadButton");
-    const downloadLink = document.getElementById("downloadLink");
-    const messageText = document.getElementById("messageText");
-    const errorText = document.getElementById("errorText");
-
-    let currentTaskId = "";
-    let pollTimer = null;
-
-    function showMessage(message) {
-      messageText.textContent = message || "";
-    }
-
-    function showError(message) {
-      errorText.textContent = message || "";
-    }
-
-    function setBusy(isBusy) {
-      uploadButton.disabled = isBusy;
-      fileInput.disabled = isBusy;
-    }
-
-    function hideDownload() {
-      downloadLink.href = "#";
-      downloadLink.setAttribute("aria-disabled", "true");
-    }
-
-    function showDownload() {
-      downloadLink.href = `/tasks/${currentTaskId}/download?access_password=`;
-      downloadLink.setAttribute("aria-disabled", "false");
-    }
-
-    function stopPolling() {
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-      }
-    }
-
-    function formatError(error) {
-      if (!error) {
-        return "操作失败";
-      }
-      if (typeof error === "string") {
-        return error;
-      }
-      if (error.message) {
-        return error.message;
-      }
-      if (Array.isArray(error.detail)) {
-        return error.detail.map((item) => {
-          const loc = Array.isArray(item.loc) ? item.loc.join(".") : "";
-          const msg = item.msg || JSON.stringify(item);
-          return loc ? `${loc}: ${msg}` : msg;
-        }).join("\n");
-      }
-      if (error.detail) {
-        return String(error.detail);
-      }
-      return JSON.stringify(error);
-    }
-
-    async function parseJsonResponse(response) {
-      const payload = await response.json();
-      if (!response.ok) {
-        throw payload;
-      }
-      return payload;
-    }
-
-    async function uploadFile(event) {
-      event.preventDefault();
-      if (!fileInput.files[0]) {
-        showError("请先选择一个 EPUB 文件。");
-        return;
-      }
-
-      try {
-        setBusy(true);
-        hideDownload();
-        stopPolling();
-        showError("");
-        showMessage("正在上传，请稍候。");
-
-        const response = await fetch("/tasks", {
-          method: "POST",
-          body: new FormData(uploadForm),
-        });
-        const payload = await parseJsonResponse(response);
-        currentTaskId = payload.task_id;
-        showMessage("任务已提交，正在处理。");
-        pollStatus();
-      } catch (error) {
-        showMessage("");
-        showError(formatError(error));
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    async function pollStatus() {
-      if (!currentTaskId) {
-        return;
-      }
-
-      try {
-        const response = await fetch(`/tasks/${currentTaskId}?access_password=`);
-        const payload = await parseJsonResponse(response);
-
-        if (payload.status === "pending" || payload.status === "running") {
-          showMessage("任务处理中，请稍候。");
-          pollTimer = setTimeout(pollStatus, 3000);
-          return;
-        }
-
-        stopPolling();
-        if (payload.status === "succeeded") {
-          showMessage("处理完成，可以下载。");
-          showError("");
-          showDownload();
-        } else if (payload.status === "failed") {
-          showMessage("");
-          showError(payload.error || "处理失败，请重新上传或稍后再试。");
-        }
-      } catch (error) {
-        stopPolling();
-        showMessage("");
-        showError(formatError(error));
-      }
-    }
-
-    uploadForm.addEventListener("submit", uploadFile);
-    hideDownload();
-  </script>
 </body>
 </html>
