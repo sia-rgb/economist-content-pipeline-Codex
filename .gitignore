@@ -1,9 +1,7 @@
 # 本地配置和生成文件
 logs/
-notes/
 runs/
-tools/
-*.epub
+TE20260425.epub
 
 # Python相关
 __pycache__/

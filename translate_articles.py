@@ -219,21 +219,32 @@ def _set_diagnostic_summary(diagnostics: Optional[dict], diagnostics_path: Optio
         diagnostics["updated_at"] = _utc_now_iso()
         _write_diagnostics(diagnostics_path, diagnostics)
 
-def load_config():
+def load_config(provider: str = "deepseek"):
     """加载配置文件"""
     # 尝试加载 .env 文件
     if DOTENV_AVAILABLE:
         load_dotenv()
         print("已加载 .env 文件配置")
 
-    # 获取API密钥
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-    model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+    provider = provider.lower()
+    if provider == "moonshot":
+        api_key = os.getenv("MOONSHOT_API_KEY")
+        api_base = os.getenv("MOONSHOT_API_BASE", "https://api.moonshot.cn/v1")
+        model = os.getenv("MOONSHOT_MODEL", "kimi-k2.5")
+        api_key_env = "MOONSHOT_API_KEY"
+    else:
+        provider = "deepseek"
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+        model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+        api_key_env = "DEEPSEEK_API_KEY"
+
     max_concurrent = _parse_max_concurrent(os.getenv("MAX_CONCURRENT"))
 
     return {
+        "provider": provider,
         "api_key": api_key,
+        "api_key_env": api_key_env,
         "api_base": api_base,
         "model": model,
         "max_concurrent": max_concurrent
@@ -255,10 +266,11 @@ def _parse_max_concurrent(value: Optional[str]) -> int:
     except (TypeError, ValueError):
         return default_value
 
-def init_deepseek_client(config, diagnostics: Optional[dict] = None,
-                         diagnostics_path: Optional[str] = None,
-                         diagnostics_lock: Optional[object] = None):
-    """初始化DeepSeek客户端"""
+def init_llm_client(config, diagnostics: Optional[dict] = None,
+                    diagnostics_path: Optional[str] = None,
+                    diagnostics_lock: Optional[object] = None):
+    """初始化 OpenAI-compatible 客户端。"""
+    provider = config.get("provider", "deepseek")
     if not DEEPSEEK_AVAILABLE:
         print("警告: openai 库未安装，无法使用真实API")
         _record_diagnostic(
@@ -271,13 +283,14 @@ def init_deepseek_client(config, diagnostics: Optional[dict] = None,
         return None
 
     if not config["api_key"]:
-        print("警告: 未设置 DEEPSEEK_API_KEY，无法使用真实API")
+        print(f"警告: 未设置 {config.get('api_key_env', 'API_KEY')}，无法使用真实API")
         _record_diagnostic(
             diagnostics, diagnostics_path, diagnostics_lock,
             "client_init",
             ok=False,
             category="config",
-            reason="未设置 DEEPSEEK_API_KEY",
+            provider=provider,
+            reason=f"未设置 {config.get('api_key_env', 'API_KEY')}",
         )
         return None
 
@@ -286,36 +299,46 @@ def init_deepseek_client(config, diagnostics: Optional[dict] = None,
             api_key=config["api_key"],
             base_url=config["api_base"]
         )
-        print(f"DeepSeek客户端初始化成功，使用模型: {config['model']}")
+        print(f"{provider} 客户端初始化成功，使用模型: {config['model']}")
         _record_diagnostic(
             diagnostics, diagnostics_path, diagnostics_lock,
             "client_init",
             ok=True,
+            provider=provider,
             model=config["model"],
             api_base=config["api_base"],
         )
         return client
     except Exception as e:
-        print(f"DeepSeek客户端初始化失败: {e}")
+        print(f"{provider} 客户端初始化失败: {e}")
         _record_diagnostic(
             diagnostics, diagnostics_path, diagnostics_lock,
             "client_init",
             ok=False,
+            provider=provider,
             category=_classify_error(e),
             **_error_details(e),
         )
         return None
 
 
-def check_deepseek_connectivity(config, timeout: float = 5.0,
-                                diagnostics: Optional[dict] = None,
-                                diagnostics_path: Optional[str] = None,
-                                diagnostics_lock: Optional[object] = None) -> bool:
+def init_deepseek_client(config, diagnostics: Optional[dict] = None,
+                         diagnostics_path: Optional[str] = None,
+                         diagnostics_lock: Optional[object] = None):
+    """兼容旧调用名。"""
+    return init_llm_client(config, diagnostics, diagnostics_path, diagnostics_lock)
+
+
+def check_llm_connectivity(config, timeout: float = 5.0,
+                           diagnostics: Optional[dict] = None,
+                           diagnostics_path: Optional[str] = None,
+                           diagnostics_lock: Optional[object] = None) -> bool:
     """
     在启动阶段做一次轻量网络自检，避免整批任务进入后才发现无法外连。
 
     只检查 TCP 连通性，不发起真实 API 请求。
     """
+    provider = config.get("provider", "deepseek")
     api_base = config["api_base"]
     parsed = urlparse(api_base)
     host = parsed.hostname
@@ -328,6 +351,7 @@ def check_deepseek_connectivity(config, timeout: float = 5.0,
             "network_preflight",
             ok=False,
             category="config",
+            provider=provider,
             api_base=api_base,
             reason="API地址格式无效",
         )
@@ -338,11 +362,12 @@ def check_deepseek_connectivity(config, timeout: float = 5.0,
 
     try:
         with socket.create_connection((host, port), timeout=timeout):
-            print("网络自检通过: DeepSeek API端点可连接")
+            print(f"网络自检通过: {provider} API端点可连接")
             _record_diagnostic(
                 diagnostics, diagnostics_path, diagnostics_lock,
                 "network_preflight",
                 ok=True,
+                provider=provider,
                 api_base=api_base,
                 host=host,
                 port=port,
@@ -355,12 +380,13 @@ def check_deepseek_connectivity(config, timeout: float = 5.0,
             print("网络自检失败: 当前环境禁止外连套接字连接（WinError 10013）")
             print("请检查 Codex 启动参数、系统防火墙或网络策略")
         else:
-            print(f"网络自检失败: 无法连接 DeepSeek API端点: {e}")
+            print(f"网络自检失败: 无法连接 {provider} API端点: {e}")
         _record_diagnostic(
             diagnostics, diagnostics_path, diagnostics_lock,
             "network_preflight",
             ok=False,
             category="network",
+            provider=provider,
             api_base=api_base,
             host=host,
             port=port,
@@ -368,6 +394,14 @@ def check_deepseek_connectivity(config, timeout: float = 5.0,
             **_error_details(e),
         )
         return False
+
+
+def check_deepseek_connectivity(config, timeout: float = 5.0,
+                                diagnostics: Optional[dict] = None,
+                                diagnostics_path: Optional[str] = None,
+                                diagnostics_lock: Optional[object] = None) -> bool:
+    """兼容旧调用名。"""
+    return check_llm_connectivity(config, timeout, diagnostics, diagnostics_path, diagnostics_lock)
 
 def read_mvp3_article(filepath: str) -> Tuple[Optional[str], Optional[str]]:
     """
@@ -576,8 +610,10 @@ def _call_deepseek_with_retry(client, model, messages,
                               diagnostics: Optional[dict] = None,
                               diagnostics_path: Optional[str] = None,
                               diagnostics_lock: Optional[object] = None,
-                              filename: Optional[str] = None) -> Optional[str]:
-    """执行单次 DeepSeek 请求，并统一处理重试与耗时日志。"""
+                              filename: Optional[str] = None,
+                              provider: str = "deepseek",
+                              run_id: Optional[str] = None) -> Optional[str]:
+    """执行单次 LLM 请求，并统一处理重试与耗时日志。"""
     temperature = 0.3
     max_tokens = TRANSLATION_MAX_TOKENS
     input_chars = _message_char_length(messages)
@@ -620,6 +656,8 @@ def _call_deepseek_with_retry(client, model, messages,
             _write_llm_call_log({
                 "request_id": request_id,
                 "task_id": None,
+                "run_id": run_id,
+                "provider": provider,
                 "article_id": filename,
                 "model": model,
                 "attempt_no": attempt,
@@ -654,6 +692,8 @@ def _call_deepseek_with_retry(client, model, messages,
                 diagnostics, diagnostics_path, diagnostics_lock,
                 "api_call",
                 ok=business_status == "success",
+                run_id=run_id,
+                provider=provider,
                 filename=filename,
                 label=log_label,
                 attempt=attempt,
@@ -695,6 +735,8 @@ def _call_deepseek_with_retry(client, model, messages,
             _write_llm_call_log({
                 "request_id": request_id,
                 "task_id": None,
+                "run_id": run_id,
+                "provider": provider,
                 "article_id": filename,
                 "model": model,
                 "attempt_no": attempt,
@@ -729,6 +771,8 @@ def _call_deepseek_with_retry(client, model, messages,
                 diagnostics, diagnostics_path, diagnostics_lock,
                 "api_call",
                 ok=False,
+                run_id=run_id,
+                provider=provider,
                 filename=filename,
                 label=log_label,
                 attempt=attempt,
@@ -839,7 +883,9 @@ def _translate_title_only(client, model, title: str,
                           diagnostics: Optional[dict] = None,
                           diagnostics_path: Optional[str] = None,
                           diagnostics_lock: Optional[object] = None,
-                          filename: Optional[str] = None) -> Optional[str]:
+                          filename: Optional[str] = None,
+                          provider: str = "deepseek",
+                          run_id: Optional[str] = None) -> Optional[str]:
     """为长文分块翻译路径单独翻译标题。"""
     messages = [
         {"role": "system", "content": "你是一位专业的《经济学人》中文版有声书播音员。"},
@@ -848,7 +894,8 @@ def _translate_title_only(client, model, title: str,
     translated_title = _call_deepseek_with_retry(
         client, model, messages, "title", max_retries=max_retries, retry_delay=retry_delay,
         diagnostics=diagnostics, diagnostics_path=diagnostics_path,
-        diagnostics_lock=diagnostics_lock, filename=filename
+        diagnostics_lock=diagnostics_lock, filename=filename,
+        provider=provider, run_id=run_id
     )
     return translated_title.strip() if translated_title else None
 
@@ -859,7 +906,9 @@ def _translate_chunk_body(client, model, title: str, chunk: str, chunk_index: in
                           diagnostics: Optional[dict] = None,
                           diagnostics_path: Optional[str] = None,
                           diagnostics_lock: Optional[object] = None,
-                          filename: Optional[str] = None) -> Optional[str]:
+                          filename: Optional[str] = None,
+                          provider: str = "deepseek",
+                          run_id: Optional[str] = None) -> Optional[str]:
     """翻译长文正文分块，避免重复输出标题和附加说明。"""
     messages = [
         {"role": "system", "content": "你是一位专业的《经济学人》中文版有声书播音员。"},
@@ -878,7 +927,8 @@ def _translate_chunk_body(client, model, title: str, chunk: str, chunk_index: in
         client, model, messages, f"chunk {chunk_index}/{total_chunks}",
         max_retries=max_retries, retry_delay=retry_delay,
         diagnostics=diagnostics, diagnostics_path=diagnostics_path,
-        diagnostics_lock=diagnostics_lock, filename=filename
+        diagnostics_lock=diagnostics_lock, filename=filename,
+        provider=provider, run_id=run_id
     )
     return translated_chunk.strip() if translated_chunk else None
 
@@ -888,7 +938,9 @@ def translate_with_deepseek(client, model, title: str, content: str,
                             diagnostics: Optional[dict] = None,
                             diagnostics_path: Optional[str] = None,
                             diagnostics_lock: Optional[object] = None,
-                            filename: Optional[str] = None) -> Optional[str]:
+                            filename: Optional[str] = None,
+                            provider: str = "deepseek",
+                            run_id: Optional[str] = None) -> Optional[str]:
     """
     使用DeepSeek API翻译文章
 
@@ -922,7 +974,9 @@ def translate_with_deepseek(client, model, title: str, content: str,
             diagnostics=diagnostics,
             diagnostics_path=diagnostics_path,
             diagnostics_lock=diagnostics_lock,
-            filename=filename
+            filename=filename,
+            provider=provider,
+            run_id=run_id
         )
         if translated_text:
             print(f"翻译完成，长度: {len(translated_text)} 字符")
@@ -938,7 +992,8 @@ def translate_with_deepseek(client, model, title: str, content: str,
     translated_title = _translate_title_only(
         client, model, title, max_retries=max_retries, retry_delay=retry_delay,
         diagnostics=diagnostics, diagnostics_path=diagnostics_path,
-        diagnostics_lock=diagnostics_lock, filename=filename
+        diagnostics_lock=diagnostics_lock, filename=filename,
+        provider=provider, run_id=run_id
     )
     if not translated_title:
         print("长文分块翻译失败: 标题翻译失败")
@@ -953,7 +1008,8 @@ def translate_with_deepseek(client, model, title: str, content: str,
             client, model, title, chunk, chunk_index, total_chunks,
             max_retries=max_retries, retry_delay=retry_delay,
             diagnostics=diagnostics, diagnostics_path=diagnostics_path,
-            diagnostics_lock=diagnostics_lock, filename=filename
+            diagnostics_lock=diagnostics_lock, filename=filename,
+            provider=provider, run_id=run_id
         )
         if not translated_chunk:
             print(f"长文分块翻译失败: 第 {chunk_index}/{total_chunks} 块翻译失败")
@@ -1009,7 +1065,8 @@ def save_mvp4_article(filepath: str, translated_text: str):
         print(f"保存文件失败 {filepath}: {e}")
         return False
 
-def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = True):
+def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = True,
+                       provider: str = "deepseek", run_id: Optional[str] = None):
     """
     翻译目录中的所有文章
 
@@ -1019,7 +1076,10 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
         use_real_api: 是否使用真实API
     """
     # 加载配置
-    config = load_config()
+    config = load_config(provider)
+    provider = config["provider"]
+    if run_id is None:
+        run_id = f"{provider}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     max_concurrent = config["max_concurrent"]
 
     print("=" * 60)
@@ -1027,6 +1087,7 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
     print(f"输入目录: {input_dir}")
     print(f"输出目录: {output_dir}")
     print(f"使用真实API: {use_real_api}")
+    print(f"API provider: {provider}")
     print(f"使用{max_concurrent}并发翻译")
     print("=" * 60)
 
@@ -1043,7 +1104,10 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
         "input_dir": input_dir,
         "output_dir": output_dir,
         "use_real_api": use_real_api,
+        "provider": provider,
+        "run_id": run_id,
         "config": {
+            "provider": provider,
             "api_base": config["api_base"],
             "model": config["model"],
             "max_concurrent": max_concurrent,
@@ -1058,7 +1122,7 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
     _write_diagnostics(diagnostics_path, diagnostics)
     print(f"翻译诊断文件: {diagnostics_path}")
 
-    # 初始化DeepSeek客户端
+    # 初始化 LLM 客户端
     client = None
     if use_real_api and not DEEPSEEK_AVAILABLE:
         _record_diagnostic(
@@ -1070,7 +1134,7 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
         )
 
     if use_real_api and DEEPSEEK_AVAILABLE:
-        if not check_deepseek_connectivity(
+        if not check_llm_connectivity(
             config,
             diagnostics=diagnostics,
             diagnostics_path=diagnostics_path,
@@ -1085,7 +1149,7 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
             return False
 
     if use_real_api and DEEPSEEK_AVAILABLE:
-        client = init_deepseek_client(
+        client = init_llm_client(
             config,
             diagnostics=diagnostics,
             diagnostics_path=diagnostics_path,
@@ -1193,6 +1257,8 @@ def translate_articles(input_dir: str, output_dir: str, use_real_api: bool = Tru
                 diagnostics_path=diagnostics_path,
                 diagnostics_lock=diagnostics_lock,
                 filename=filename,
+                provider=provider,
+                run_id=run_id,
             )
         else:
             translated_text = mock_translate(title, content)
