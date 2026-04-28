@@ -25,7 +25,7 @@
 
 ## 以下三类约束的区别（Process / Behavior / Execution）
 
-| 类型 | 控制什么 | 本质 | 判断问题 | 典型规则示例 |
+| 类型 | 控制什么 | 本质 | 
 |------|----------|------|----------|--------------|
 | **流程约束（Process）** | 怎么思考 | 思维路径 |
 | **行为约束（Behavior）** | 能做什么 / 不能做什么 | 行为边界 | 
@@ -55,7 +55,7 @@
 
 ## Behavior Constraints（行为约束）
 
-### Development Rules（开发规范）
+### 1.Development Rules（开发规范）
 
 - 禁止过早优化
 - 优先最小改动
@@ -64,7 +64,7 @@
 
 ---
 
-### Forbidden Actions（禁止行为）
+### 2.Forbidden Actions（禁止行为）
 
 除非用户明确要求，否则禁止：
 
@@ -77,7 +77,7 @@
 
 ---
 
-### Encoding Rules（编码规范 - CRITICAL）
+### 3.Encoding Rules（编码规范 - CRITICAL）
 
 - 所有文件必须使用 UTF-8
 - 禁止依赖系统默认编码
