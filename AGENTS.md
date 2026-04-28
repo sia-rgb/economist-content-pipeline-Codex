@@ -117,3 +117,41 @@
 
 - Preconditions valid → 执行  
 - Preconditions invalid → 停止
+
+---
+
+## 文档优先级（Precedence）
+
+### 当指令或文档冲突时，按以下层级降序执行：
+
+#### Level 0: 最高准则 (The Law) - AGENTS.md
+ - 核心：所有行为不得违反此文件的“禁止行为 (Forbidden Actions)”。
+
+#### Level 1: 直接指令 (Direct Order) - 用户 Prompt
+ - 核心：在不违反 L0 的前提下，以用户当前任务目标为准。
+
+#### Level 2: 全局上下文 (Global Context) - README.md
+ - 核心：确保改动符合项目既定架构与业务链路。
+
+#### Level 3: 既有逻辑 (Legacy Logic) - 现有代码
+ - 核心：作为现状参考，但必须服从 L0-L2 的修改指令。
+
+### 当不同脚本逻辑冲突时，遵循以下逻辑：
+
+#### 调用者优先 (Caller > Callee)：主控脚本的需求高于模块内部实现。
+
+#### 下游优先 (Downstream > Upstream)：以数据流末端的格式需求为准，反向要求上游适配。
+
+#### 通用优先 (Global Utils > Local Logic)：严禁为单一业务改动破坏通用工具类的稳定性。
+
+#### 风险最小化 (Minimal Disruption)：优先选择改动成本最低、受影响范围最小的方案。
+
+### 若无法自动裁决，Agent 必须：
+
+#### 识别 (Identify)：指出具体的冲突点。
+
+#### 挂起 (Suspend)：立即停止任何写操作。
+
+#### 报告 (Report)：提交冲突详情并给出建议方案。
+
+#### 待命 (Wait)：等待用户显式授权后方可继续。
